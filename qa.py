@@ -1,15 +1,10 @@
-import os
-import yaml
-import bs4
-from langchain_community.document_loaders import WebBaseLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_astradb import AstraDBVectorStore
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_core.documents import Document
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
-from langchain_openai import OpenAIEmbeddings
-
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_astradb import AstraDBVectorStore
+from langchain import hub
+import os
+import yaml
 
 # Load OPENAI & Langsmith API Keys
 print("Loading Configuration data")
@@ -34,23 +29,6 @@ os.environ['OPENAI_API_KEY'] = OPENAI_API_KEY
 # Initialize the LLM
 llm = ChatOpenAI(model='gpt-4o')
 
-print("Loading the blog contents") 
-# Load, chunk and index the contents of the blog.
-loader = WebBaseLoader(
-    web_paths=("https://www.jeyamohan.in/200801/",),
-    bs_kwargs=dict(
-        parse_only=bs4.SoupStrainer(
-            class_=("td-post-content tagdiv-type",)
-        )
-    ),
-)
-
-docs = loader.load()
-
-print("Splitting the blog content into smaller chunks")
-text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-splits = text_splitter.split_documents(docs)
-
 # Retrieve and generate using the relevant snippets of the blog
 
 embeddings = OpenAIEmbeddings()
@@ -63,6 +41,17 @@ vstore = AstraDBVectorStore(
     api_endpoint = ASTRA_DB_API_ENDPOINT
 )
 
-inserted_ids = vstore.add_documents(splits)
-print(f"\nInserted {len(inserted_ids)} documents.")
+retriever = vstore.as_retriever()
+prompt = hub.pull("rag_detailed")
 
+def format_docs(docs):
+    return "\n\n".join(doc.page_content for doc in docs)
+
+rag_chain = (
+    {"context": retriever | format_docs, "question": RunnablePassthrough()}
+    | prompt
+    | llm
+    | StrOutputParser()
+)
+
+print(rag_chain.invoke("நம் கல்விமுறையின் அடிப்படைச் சிக்கல்?"))
